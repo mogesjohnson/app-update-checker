@@ -232,6 +232,41 @@ Describe 'Get-AppsFromCli version matching for duplicate Ids' {
         $app.UpdateAvailable | Should -BeTrue
         $app.Latest | Should -Be '3.0'
     }
+
+    It 'keeps same-Id rows with different names apart (OLE DB 18 and 19)' {
+        Use-WingetOutput -List @(
+            , @('Microsoft OLE DB Driver for SQL Server', 'Microsoft.msoledbsql', '18.7.2.0', '')
+            , @('Microsoft OLE DB Driver 19 for SQL Server', 'Microsoft.msoledbsql', '19.3.5.0', '')
+        ) -Upgrade @(
+            , @('Microsoft OLE DB Driver for SQL Server', 'Microsoft.msoledbsql', '18.7.2.0', '18.7.4.0')
+        )
+        $apps = @(Get-AppsFromCli)
+        $apps.Count | Should -Be 2
+        $v18 = $apps | Where-Object Installed -eq '18.7.2.0'
+        $v19 = $apps | Where-Object Installed -eq '19.3.5.0'
+        $v18.Name | Should -Be 'Microsoft OLE DB Driver for SQL Server'
+        $v18.UpdateAvailable | Should -BeTrue
+        $v18.Latest | Should -Be '18.7.4.0'
+        $v19.Name | Should -Be 'Microsoft OLE DB Driver 19 for SQL Server'
+        $v19.UpdateAvailable | Should -BeFalse
+        $v19.Latest | Should -Be '19.3.5.0'
+    }
+}
+
+Describe 'Get-AppsFromModule with an Id installed twice' {
+    It 'maps each installed copy on its own' {
+        Mock Import-Module { } -ParameterFilter { $Name -eq 'Microsoft.WinGet.Client' }
+        Mock Get-WinGetPackage {
+            [pscustomobject]@{ Name = 'Microsoft OLE DB Driver for SQL Server'; Id = 'Microsoft.msoledbsql'; InstalledVersion = '18.7.2.0'; IsUpdateAvailable = $true; AvailableVersions = @('19.3.5.0', '18.7.4.0') }
+            [pscustomobject]@{ Name = 'Microsoft OLE DB Driver 19 for SQL Server'; Id = 'Microsoft.msoledbsql'; InstalledVersion = '19.3.5.0'; IsUpdateAvailable = $false; AvailableVersions = @('19.3.5.0') }
+        }
+        $apps = @(Get-AppsFromModule)
+        $apps.Count | Should -Be 2
+        $apps[0].UpdateAvailable | Should -BeTrue
+        $apps[0].Latest | Should -Be '19.3.5.0'
+        $apps[1].UpdateAvailable | Should -BeFalse
+        $apps[1].Latest | Should -Be '19.3.5.0'
+    }
 }
 
 Describe 'Get-AppsFromModule' {
