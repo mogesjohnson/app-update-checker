@@ -40,6 +40,9 @@
 #>
 [CmdletBinding()]
 param(
+    [switch]$UpdatesOnly,
+    [string]$ExportCsv,
+    [switch]$Json,
     [switch]$UseCli
 )
 
@@ -149,6 +152,29 @@ function Get-AppInventory {
     return @(Get-AppsFromCli)
 }
 
+function Limit-Text([string]$Text, [int]$Max) {
+    if ($Text.Length -le $Max) { return $Text }
+    return $Text.Substring(0, $Max - 1) + '~'
+}
+
+function Write-AppTable($Rows) {
+    $w = @{
+        Name      = [Math]::Min(40, [Math]::Max(4, ($Rows | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum))
+        Id        = [Math]::Min(40, [Math]::Max(2, ($Rows | ForEach-Object { $_.Id.Length } | Measure-Object -Maximum).Maximum))
+        Installed = [Math]::Min(20, [Math]::Max(9, ($Rows | ForEach-Object { $_.Installed.Length } | Measure-Object -Maximum).Maximum))
+        Latest    = [Math]::Min(20, [Math]::Max(6, ($Rows | ForEach-Object { $_.Latest.Length } | Measure-Object -Maximum).Maximum))
+    }
+    $fmt = "{0,-$($w.Name)}  {1,-$($w.Id)}  {2,-$($w.Installed)}  {3,-$($w.Latest)}  {4}"
+    Write-Host ($fmt -f 'Name', 'Id', 'Installed', 'Latest', 'Status')
+    Write-Host ($fmt -f ('-' * $w.Name), ('-' * $w.Id), ('-' * $w.Installed), ('-' * $w.Latest), ('-' * 16))
+    foreach ($r in $Rows) {
+        $color = if ($r.Status -eq 'Update available') { 'Yellow' } else { 'Green' }
+        $line = $fmt -f (Limit-Text $r.Name $w.Name), (Limit-Text $r.Id $w.Id),
+            (Limit-Text $r.Installed $w.Installed), (Limit-Text $r.Latest $w.Latest), $r.Status
+        Write-Host $line -ForegroundColor $color
+    }
+}
+
 # ---- main ----
 $rows = @(Get-AppInventory | Sort-Object Name | ForEach-Object {
     [pscustomobject]@{
@@ -159,4 +185,27 @@ $rows = @(Get-AppInventory | Sort-Object Name | ForEach-Object {
         Status    = if ($_.UpdateAvailable) { 'Update available' } else { 'Up to date' }
     }
 })
-$rows | Format-Table -AutoSize
+$updates = @($rows | Where-Object { $_.Status -eq 'Update available' })
+$shown = if ($UpdatesOnly) { $updates } else { $rows }
+
+if ($ExportCsv) {
+    $shown | Export-Csv -Path $ExportCsv -NoTypeInformation -Encoding UTF8
+    Write-Host "Exported $($shown.Count) row(s) to $ExportCsv" -ForegroundColor Cyan
+}
+
+if ($Json) {
+    ConvertTo-Json -InputObject @($shown) -Depth 3
+    return
+}
+
+if ($shown.Count -gt 0) { Write-AppTable $shown } else { Write-Host 'No applications to show.' }
+
+Write-Host ''
+Write-Host ("Summary: {0} apps checked, {1} update(s) available, {2} up to date." -f `
+    $rows.Count, $updates.Count, ($rows.Count - $updates.Count))
+
+if ($updates.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'To update an app (this script does not install anything), run:' -ForegroundColor Cyan
+    foreach ($u in $updates) { Write-Host "  winget upgrade --id $($u.Id)" }
+}
