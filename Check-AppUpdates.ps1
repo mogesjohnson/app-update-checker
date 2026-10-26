@@ -111,6 +111,24 @@ function ConvertFrom-WingetTable {
     }
 }
 
+function Get-VersionKey([string]$Version) {
+    # Normalizes a version as winget prints it so the list and upgrade tables compare equal:
+    # drops a leading '<' or '>', a trailing ellipsis and trailing '.0' parts.
+    $v = ($Version -replace '^[<>]\s*', '').Trim().ToLowerInvariant()
+    $v = $v.TrimEnd([char]0x2026).TrimEnd('.')
+    $v -replace '(\.0+)+$', ''
+}
+
+function Test-SameVersion([string]$A, [string]$B) {
+    $ka = Get-VersionKey $A
+    $kb = Get-VersionKey $B
+    if ($ka -eq $kb) { return $true }
+    # A value winget cut short with an ellipsis matches any version it is a prefix of.
+    if ($A.EndsWith([string][char]0x2026) -and $ka -and $kb.StartsWith($ka)) { return $true }
+    if ($B.EndsWith([string][char]0x2026) -and $kb -and $ka.StartsWith($kb)) { return $true }
+    $false
+}
+
 function Get-AppsFromCli {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         throw 'winget was not found. Install "App Installer" from the Microsoft Store.'
@@ -118,21 +136,23 @@ function Get-AppsFromCli {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
     $list = ConvertFrom-WingetTable (winget list --accept-source-agreements 2>$null)
-    # Key upgrades by Id and installed version: winget lists one row per installed copy,
+    # Match upgrades by Id and installed version: winget lists one row per installed copy,
     # so an Id installed twice must not mark both copies as outdated.
-    $updates = @{}
     $updatesById = @{}
     foreach ($u in ConvertFrom-WingetTable (winget upgrade --include-unknown --accept-source-agreements 2>$null)) {
-        $updates["$($u.Id)|$($u.Version)"] = $u
-        $updatesById[$u.Id] = $u
+        if (-not $updatesById.ContainsKey($u.Id)) { $updatesById[$u.Id] = New-Object System.Collections.ArrayList }
+        [void]$updatesById[$u.Id].Add($u)
     }
     $idCount = @{}
     foreach ($p in $list) { $idCount[$p.Id] = 1 + [int]$idCount[$p.Id] }
 
     foreach ($p in $list) {
-        $u = $updates["$($p.Id)|$($p.Version)"]
-        # A single installed copy still matches by Id if the two tables show its version differently.
-        if (-not $u -and $idCount[$p.Id] -eq 1) { $u = $updatesById[$p.Id] }
+        $u = $null
+        if ($updatesById.ContainsKey($p.Id)) {
+            $u = $updatesById[$p.Id] | Where-Object { Test-SameVersion $_.Version $p.Version } | Select-Object -First 1
+            # A single installed copy still matches by Id if the two tables show its version differently.
+            if (-not $u -and $idCount[$p.Id] -eq 1) { $u = $updatesById[$p.Id][0] }
+        }
         $latest = if ($u -and $u.Available) { $u.Available } elseif ($p.Available) { $p.Available } else { $p.Version }
         [pscustomobject]@{
             Name            = $p.Name
