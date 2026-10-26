@@ -68,7 +68,8 @@ No administrator rights are needed.
 ## The module prompt
 
 The script prefers the `Microsoft.WinGet.Client` module (`Get-WinGetPackage`), which gives
-exact versions. If the module is not installed and you did not pass `-UseCli`, it asks:
+exact versions. If the module is not installed, you did not pass `-UseCli` or `-Json`, and
+the session is interactive, it asks:
 
 ```text
 Microsoft.WinGet.Client module not found. Install it for the current user now? [y/N] (N = use winget CLI)
@@ -80,7 +81,14 @@ Microsoft.WinGet.Client module not found. Install it for the current user now? [
   `winget list` and `winget upgrade --include-unknown`.
 - `-UseCli` skips the module and the prompt entirely. Use it for unattended runs.
 
-If the module is installed but fails, the script prints a warning and falls back to the CLI.
+The script never asks, and uses the CLI with a warning instead, when:
+
+- `-Json` is set, so that only JSON reaches stdout, or
+- nobody can answer: input is piped or redirected (`'N' | ...`), PowerShell was started with
+  `-NonInteractive`, or it runs as a service or scheduled task without a desktop.
+
+If the install after `y` fails (offline, blocked gallery, policy), or the module is installed
+but fails, the script prints a warning and falls back to the CLI.
 
 ## Usage
 
