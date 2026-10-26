@@ -88,6 +88,23 @@ Describe 'ConvertFrom-WingetTable' {
         @(ConvertFrom-WingetTable $lines).Id | Should -Be @('Git.Git', 'Microsoft.VisualStudioCode')
     }
 
+    It 'cuts columns by display width when names have double-width characters' {
+        # winget pads East Asian wide and fullwidth characters as two columns.
+        $rows = @(ConvertFrom-WingetTable (Get-Fixture 'winget-list-wide.txt'))
+        $rows.Id | Should -Be @('EPSON.PCFAXDriver', 'Git.Git', 'LINE.LINE', 'Hancom.HancomOffice', '7zip.7zip')
+        $rows.Version | Should -Be @('1.12.00', '2.47.0', '9.4.2.3600', '12.0.0.535', '23.01')
+        $rows.Available | Should -Be @('1.13.00', '', '', '', '24.08')
+        $driver = -join [char[]](0x30C9, 0x30E9, 0x30A4, 0x30D0, 0x30FC)
+        $rows[0].Name | Should -Be "Epson PC-FAX$driver"
+    }
+
+    It 'reads a header written in double-width characters' {
+        $rows = @(ConvertFrom-WingetTable (Get-Fixture 'winget-list-ja.txt'))
+        $rows.Id | Should -Be @('EPSON.PCFAXDriver', 'Microsoft.WindowsNotepad')
+        $rows.Version | Should -Be @('1.12.00', '11.2410.21.0')
+        $rows[0].Available | Should -Be '1.13.00'
+    }
+
     It 'returns nothing when there is no table' {
         @(ConvertFrom-WingetTable (Get-Fixture 'winget-upgrade-none.txt')).Count | Should -Be 0
         @(ConvertFrom-WingetTable @()).Count | Should -Be 0

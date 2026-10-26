@@ -1,0 +1,7 @@
+Name                                   Id                                 Version          Available      Source
+----------------------------------------------------------------------------------------------------------------------
+Epson PC-FAXドライバー                 EPSON.PCFAXDriver                  1.12.00          1.13.00        winget
+Git                                    Git.Git                            2.47.0                          winget
+ＬＩＮＥ                               LINE.LINE                          9.4.2.3600                      winget
+한컴오피스 한글                        Hancom.HancomOffice                12.0.0.535                      winget
+7-Zip 23.01 (x64)                      7zip.7zip                          23.01            24.08          winget

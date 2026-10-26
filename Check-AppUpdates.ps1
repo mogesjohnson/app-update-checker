@@ -67,8 +67,41 @@ function Get-AppsFromModule {
     }
 }
 
+# Characters winget pads as two console columns (East Asian wide and fullwidth, and
+# surrogate pairs such as emoji), and characters that take none (combining marks, low surrogates).
+$WideChars = '[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\uD800-\uDBFF]'
+$ZeroWidthChars = '[\u0300-\u036F\u200B-\u200F\uDC00-\uDFFF]'
+
+function Get-CharWidth([char]$Char) {
+    if ([string]$Char -match $ZeroWidthChars) { return 0 }
+    if ([string]$Char -match $WideChars) { return 2 }
+    return 1
+}
+
+function Get-DisplayWidth([string]$Text) {
+    $width = 0
+    foreach ($ch in $Text.ToCharArray()) { $width += Get-CharWidth $ch }
+    $width
+}
+
+function Split-DisplayColumn {
+    # Cuts a line into cells that start at the given display columns.
+    param([string]$Line, [int[]]$Starts)
+    $cells = @(foreach ($s in $Starts) { New-Object System.Text.StringBuilder })
+    $col = 0
+    $cell = 0
+    foreach ($ch in $Line.ToCharArray()) {
+        while ($cell + 1 -lt $Starts.Count -and $col -ge $Starts[$cell + 1]) { $cell++ }
+        if ($col -ge $Starts[0]) { [void]$cells[$cell].Append($ch) }
+        $col += Get-CharWidth $ch
+    }
+    @($cells | ForEach-Object { $_.ToString().Trim() })
+}
+
 function ConvertFrom-WingetTable {
     # Parses a winget text table using the column start positions of the header line.
+    # winget pads columns by display width, so lines with double-width characters are cut
+    # by display column; plain lines keep the fast character-index path.
     param([string[]]$Lines)
 
     # winget writes progress spinners with carriage returns; keep the final text of each line.
@@ -81,8 +114,11 @@ function ConvertFrom-WingetTable {
     if ($sep -lt 1) { return }
 
     $header = $Lines[$sep - 1]
-    $cols = @([regex]::Matches($header, '\S+') | ForEach-Object { [pscustomobject]@{ Name = $_.Value; Start = $_.Index } })
+    $cols = @([regex]::Matches($header, '\S+') | ForEach-Object {
+        [pscustomobject]@{ Name = $_.Value; Start = Get-DisplayWidth $header.Substring(0, $_.Index) }
+    })
     if ($cols.Count -lt 3) { return }
+    $starts = [int[]]@($cols | ForEach-Object { $_.Start })
 
     $availIdx = -1
     for ($c = 0; $c -lt $cols.Count; $c++) { if ($cols[$c].Name -eq 'Available') { $availIdx = $c } }
@@ -91,12 +127,18 @@ function ConvertFrom-WingetTable {
     for ($i = $sep + 1; $i -lt $Lines.Count; $i++) {
         $line = $Lines[$i]
         if ([string]::IsNullOrWhiteSpace($line)) { break }   # end of table
-        if ($line.Length -le $cols[2].Start) { continue }    # not a data row
+        $wide = $line -match $WideChars -or $line -match $ZeroWidthChars
+        $lineWidth = if ($wide) { Get-DisplayWidth $line } else { $line.Length }
+        if ($lineWidth -le $cols[2].Start) { continue }      # not a data row
 
-        $cells = for ($c = 0; $c -lt $cols.Count; $c++) {
-            $start = $cols[$c].Start
-            $end = if ($c + 1 -lt $cols.Count) { [Math]::Min($cols[$c + 1].Start, $line.Length) } else { $line.Length }
-            if ($start -ge $line.Length -or $end -le $start) { '' } else { $line.Substring($start, $end - $start).Trim() }
+        if ($wide) {
+            $cells = Split-DisplayColumn -Line $line -Starts $starts
+        } else {
+            $cells = for ($c = 0; $c -lt $cols.Count; $c++) {
+                $start = $cols[$c].Start
+                $end = if ($c + 1 -lt $cols.Count) { [Math]::Min($cols[$c + 1].Start, $line.Length) } else { $line.Length }
+                if ($start -ge $line.Length -or $end -le $start) { '' } else { $line.Substring($start, $end - $start).Trim() }
+            }
         }
         $cells = @($cells)
         if (-not $cells[1]) { continue }
