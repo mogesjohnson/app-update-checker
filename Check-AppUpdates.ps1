@@ -160,7 +160,9 @@ function Get-AppInventory {
             } else {
                 $answer = Read-Host "$ModuleName module not found. Install it for the current user now? [y/N] (N = use winget CLI)"
                 if ($answer -match '^(y|yes)$') {
-                    Install-Module $ModuleName -Scope CurrentUser -Force -AllowClobber
+                    # A failed install (offline, blocked gallery, policy) falls back to the CLI below.
+                    try { Install-Module $ModuleName -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop }
+                    catch { Write-Notice "Could not install $ModuleName ($($_.Exception.Message)); using the winget CLI." }
                 }
             }
         }

@@ -198,6 +198,23 @@ Describe 'Get-AppInventory' {
         Should -Invoke Get-Module -Times 0 -Exactly
     }
 
+    It 'falls back to the CLI when the module install fails after answering y' {
+        Mock Get-Module { } -ParameterFilter { $ListAvailable }
+        Mock Read-Host { 'y' }
+        Mock Install-Module { throw 'No match was found for the specified search criteria' }
+        (Get-AppInventory).Name | Should -Be 'cli'
+        Should -Invoke Install-Module -Times 1 -Exactly
+        Should -Invoke Write-Notice -Times 1 -Exactly -ParameterFilter { $Message -match 'Could not install' }
+    }
+
+    It 'uses the module after a successful install' {
+        $script:installed = $false
+        Mock Get-Module { if ($script:installed) { [pscustomobject]@{ Name = 'Microsoft.WinGet.Client' } } } -ParameterFilter { $ListAvailable }
+        Mock Read-Host { 'y' }
+        Mock Install-Module { $script:installed = $true }
+        (Get-AppInventory).Name | Should -Be 'module'
+    }
+
     It 'does not prompt with -Json and says why on the notice channel' {
         $Json = $true
         Mock Get-Module { } -ParameterFilter { $ListAvailable }
