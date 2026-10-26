@@ -223,8 +223,9 @@ The tests use [Pester 5](https://pester.dev) and mock winget and the WinGet modu
 need neither and never change anything on the machine. They run on Windows PowerShell 5.1
 and PowerShell 7 (including PowerShell 7 on Linux or macOS).
 
-The tests need **Pester 5**. They do not run on Pester 6 (a plain `Install-Module Pester`
-now installs 6) or on the Pester 3.4 that ships with Windows PowerShell 5.1.
+The tests need **Pester 5**, the version CI uses. Pester 6 (what a plain
+`Install-Module Pester` now installs) is not supported or tested in CI, and the Pester 3.4
+that ships with Windows PowerShell 5.1 cannot run them.
 
 Install Pester 5 once for your user. `-SkipPublisherCheck` is needed because of that built-in
 Pester 3, and the version range keeps you on Pester 5:
