@@ -137,10 +137,152 @@ Describe 'Get-AppsFromCli' {
         )
     }
 
+    It 'matches upgrades by Id and installed version when an Id is installed twice' {
+        Mock winget {
+            $header = @(
+                'Name             Id                 Version   Available Source',
+                '---------------------------------------------------------------'
+            )
+            switch ($args[0]) {
+                'list' {
+                    $header
+                    '.NET Runtime 8   Microsoft.DotNet.8 8.0.8     8.0.11    winget'
+                    '.NET Runtime 8   Microsoft.DotNet.8 8.0.11              winget'
+                }
+                'upgrade' {
+                    $header
+                    '.NET Runtime 8   Microsoft.DotNet.8 8.0.8     8.0.11    winget'
+                }
+            }
+        }
+        $apps = @(Get-AppsFromCli)
+        $apps.Count | Should -Be 2
+        $old = $apps | Where-Object Installed -eq '8.0.8'
+        $new = $apps | Where-Object Installed -eq '8.0.11'
+        $old.UpdateAvailable | Should -BeTrue
+        $old.Latest | Should -Be '8.0.11'
+        $new.UpdateAvailable | Should -BeFalse
+        $new.Latest | Should -Be '8.0.11'
+    }
+
     It 'throws when winget is not installed' {
         Mock Get-Command { $null } -ParameterFilter { $Name -eq 'winget' }
         { Get-AppsFromCli } | Should -Throw '*winget was not found*'
         $calls.Count | Should -Be 0
+    }
+}
+
+Describe 'Get-AppsFromCli version matching for duplicate Ids' {
+    BeforeAll {
+        # Builds a fixed-width winget table: Name, Id, Version, Available, Source.
+        function Format-WingetTable([object[]]$Rows) {
+            $fmt = '{0,-42}{1,-24}{2,-16}{3,-14}{4}'
+            ($fmt -f 'Name', 'Id', 'Version', 'Available', 'Source')
+            ('-' * 100)
+            foreach ($r in $Rows) { ($fmt -f $r[0], $r[1], $r[2], $r[3], 'winget').TrimEnd() }
+        }
+        function Use-WingetOutput([object[]]$List, [object[]]$Upgrade) {
+            $script:listTable = @(Format-WingetTable $List)
+            $script:upgradeTable = @(Format-WingetTable $Upgrade)
+            Mock winget { if ($args[0] -eq 'list') { $script:listTable } else { $script:upgradeTable } }
+        }
+    }
+
+    It 'matches when winget upgrade adds trailing .0 parts' {
+        Use-WingetOutput -List @(
+            , @('.NET Runtime 8', 'Microsoft.DotNet.8', '8.0.8', '')
+            , @('.NET Runtime 8', 'Microsoft.DotNet.8', '8.0.11', '')
+        ) -Upgrade @(
+            , @('.NET Runtime 8', 'Microsoft.DotNet.8', '8.0.8.0', '8.0.11')
+        )
+        $apps = @(Get-AppsFromCli)
+        ($apps | Where-Object Installed -eq '8.0.8').UpdateAvailable | Should -BeTrue
+        ($apps | Where-Object Installed -eq '8.0.11').UpdateAvailable | Should -BeFalse
+    }
+
+    It 'matches a version that one table truncated with an ellipsis' {
+        $cut = '14.40.338' + [char]0x2026
+        Use-WingetOutput -List @(
+            , @('VC++ 2015-2022 x64', 'Microsoft.VCRedist.x64', '14.38.33130.0', '')
+            , @('VC++ 2015-2022 x64', 'Microsoft.VCRedist.x64', '14.40.33810.0', '')
+        ) -Upgrade @(
+            , @('VC++ 2015-2022 x64', 'Microsoft.VCRedist.x64', $cut, '14.42.34433.0')
+        )
+        $apps = @(Get-AppsFromCli)
+        ($apps | Where-Object Installed -eq '14.40.33810.0').Latest | Should -Be '14.42.34433.0'
+        ($apps | Where-Object Installed -eq '14.40.33810.0').UpdateAvailable | Should -BeTrue
+        ($apps | Where-Object Installed -eq '14.38.33130.0').UpdateAvailable | Should -BeFalse
+    }
+
+    It 'ignores the less-than marker winget puts before some versions' {
+        Use-WingetOutput -List @(
+            , @('Tool', 'Contoso.Tool', '< 2.0', '')
+            , @('Tool', 'Contoso.Tool', '3.0', '')
+        ) -Upgrade @(
+            , @('Tool', 'Contoso.Tool', '2.0', '3.0')
+        )
+        $apps = @(Get-AppsFromCli)
+        ($apps | Where-Object Installed -eq '< 2.0').UpdateAvailable | Should -BeTrue
+        ($apps | Where-Object Installed -eq '3.0').UpdateAvailable | Should -BeFalse
+    }
+
+    It 'falls back to the Id for a single installed copy whose version reads differently' {
+        Use-WingetOutput -List @(, @('Tool', 'Contoso.Tool', '2.0-beta', '')) -Upgrade @(, @('Tool', 'Contoso.Tool', '2.0 beta', '3.0'))
+        $app = Get-AppsFromCli
+        $app.UpdateAvailable | Should -BeTrue
+        $app.Latest | Should -Be '3.0'
+    }
+
+    It 'keeps same-Id rows with different names apart (OLE DB 18 and 19)' {
+        Use-WingetOutput -List @(
+            , @('Microsoft OLE DB Driver for SQL Server', 'Microsoft.msoledbsql', '18.7.2.0', '')
+            , @('Microsoft OLE DB Driver 19 for SQL Server', 'Microsoft.msoledbsql', '19.3.5.0', '')
+        ) -Upgrade @(
+            , @('Microsoft OLE DB Driver for SQL Server', 'Microsoft.msoledbsql', '18.7.2.0', '18.7.4.0')
+        )
+        $apps = @(Get-AppsFromCli)
+        $apps.Count | Should -Be 2
+        $v18 = $apps | Where-Object Installed -eq '18.7.2.0'
+        $v19 = $apps | Where-Object Installed -eq '19.3.5.0'
+        $v18.Name | Should -Be 'Microsoft OLE DB Driver for SQL Server'
+        $v18.UpdateAvailable | Should -BeTrue
+        $v18.Latest | Should -Be '18.7.4.0'
+        $v19.Name | Should -Be 'Microsoft OLE DB Driver 19 for SQL Server'
+        $v19.UpdateAvailable | Should -BeFalse
+        $v19.Latest | Should -Be '19.3.5.0'
+    }
+}
+
+Describe 'Get-AppsFromCli held updates' {
+    It 'marks an app held when list shows a newer version that upgrade skips' {
+        $script:listTable = @(
+            '{0,-20}{1,-20}{2,-10}{3,-10}{4}' -f 'Name', 'Id', 'Version', 'Available', 'Source'
+            '-' * 66
+            '{0,-20}{1,-20}{2,-10}{3,-10}{4}' -f 'Pinned App', 'Pinned.App', '1.0', '2.0', 'winget'
+            '{0,-20}{1,-20}{2,-10}{3,-10}{4}' -f 'Other App', 'Other.App', '1.0', '1.0.0', 'winget'
+        )
+        Mock winget { if ($args[0] -eq 'list') { $script:listTable } else { 'No installed package found matching input criteria.' } }
+        $apps = @(Get-AppsFromCli)
+        $apps[0].Held | Should -BeTrue
+        $apps[0].UpdateAvailable | Should -BeFalse
+        $apps[0].Latest | Should -Be '2.0'
+        $apps[1].Held | Should -BeFalse
+    }
+}
+
+Describe 'Get-AppsFromModule with an Id installed twice' {
+    It 'maps each installed copy on its own' {
+        Mock Import-Module { } -ParameterFilter { $Name -eq 'Microsoft.WinGet.Client' }
+        Mock Get-WinGetPackage {
+            [pscustomobject]@{ Name = 'Microsoft OLE DB Driver for SQL Server'; Id = 'Microsoft.msoledbsql'; InstalledVersion = '18.7.2.0'; IsUpdateAvailable = $true; AvailableVersions = @('19.3.5.0', '18.7.4.0') }
+            [pscustomobject]@{ Name = 'Microsoft OLE DB Driver 19 for SQL Server'; Id = 'Microsoft.msoledbsql'; InstalledVersion = '19.3.5.0'; IsUpdateAvailable = $false; AvailableVersions = @('19.3.5.0') }
+        }
+        $apps = @(Get-AppsFromModule)
+        $apps.Count | Should -Be 2
+        $apps[0].UpdateAvailable | Should -BeTrue
+        $apps[0].Latest | Should -Be '19.3.5.0'
+        $apps[1].UpdateAvailable | Should -BeFalse
+        $apps[1].Latest | Should -Be '19.3.5.0'
     }
 }
 
@@ -412,5 +554,22 @@ Describe 'Check-AppUpdates.ps1 end to end' {
         $rows = @(Import-Csv $csv)
         $rows.Count | Should -Be 3
         $rows[0].PSObject.Properties.Name | Should -Be @('Name', 'Id', 'Installed', 'Latest', 'Status')
+    }
+
+    It 'reports a pinned app as Update held, outside -UpdatesOnly and the update count' {
+        $pinned = '{0,-39}{1,-35}{2,-17}{3,-15}{4}' -f 'Pinned App', 'Pinned.App', '1.0', '2.0', 'winget'
+        $heldList = @(Get-Fixture 'winget-list.txt') + $pinned
+        Mock winget {
+            $calls.Add(($args -join ' '))
+            if ($args[0] -eq 'list') { $heldList } else { Get-Fixture 'winget-upgrade.txt' }
+        }
+        $apps = ConvertFrom-JsonArray (& $ScriptPath -UseCli -Json)
+        $app = $apps | Where-Object Id -eq 'Pinned.App'
+        $app.Status | Should -Be 'Update held'
+        $app.Latest | Should -Be '2.0'
+        (ConvertFrom-JsonArray (& $ScriptPath -UseCli -Json -UpdatesOnly)).Id | Should -Not -Contain 'Pinned.App'
+        $out = & $ScriptPath -UseCli 6>&1 | Out-String
+        $out | Should -Match 'Summary: 7 apps checked, 3 update\(s\) available, 1 held, 3 up to date\.'
+        $out | Should -Not -Match '--id Pinned\.App'
     }
 }

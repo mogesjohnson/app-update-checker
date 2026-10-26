@@ -64,6 +64,7 @@ function Get-AppsFromModule {
             Installed       = $installed
             Latest          = $latest
             UpdateAvailable = [bool]$pkg.IsUpdateAvailable
+            Held            = $false
         }
     }
 }
@@ -111,6 +112,24 @@ function ConvertFrom-WingetTable {
     }
 }
 
+function Get-VersionKey([string]$Version) {
+    # Normalizes a version as winget prints it so the list and upgrade tables compare equal:
+    # drops a leading '<' or '>', a trailing ellipsis and trailing '.0' parts.
+    $v = ($Version -replace '^[<>]\s*', '').Trim().ToLowerInvariant()
+    $v = $v.TrimEnd([char]0x2026).TrimEnd('.')
+    $v -replace '(\.0+)+$', ''
+}
+
+function Test-SameVersion([string]$A, [string]$B) {
+    $ka = Get-VersionKey $A
+    $kb = Get-VersionKey $B
+    if ($ka -eq $kb) { return $true }
+    # A value winget cut short with an ellipsis matches any version it is a prefix of.
+    if ($A.EndsWith([string][char]0x2026) -and $ka -and $kb.StartsWith($ka)) { return $true }
+    if ($B.EndsWith([string][char]0x2026) -and $kb -and $ka.StartsWith($kb)) { return $true }
+    $false
+}
+
 function Get-AppsFromCli {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         throw 'winget was not found. Install "App Installer" from the Microsoft Store.'
@@ -118,13 +137,23 @@ function Get-AppsFromCli {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
     $list = ConvertFrom-WingetTable (winget list --accept-source-agreements 2>$null)
-    $updates = @{}
+    # Match upgrades by Id and installed version: winget lists one row per installed copy,
+    # so an Id installed twice must not mark both copies as outdated.
+    $updatesById = @{}
     foreach ($u in ConvertFrom-WingetTable (winget upgrade --include-unknown --accept-source-agreements 2>$null)) {
-        $updates[$u.Id] = $u
+        if (-not $updatesById.ContainsKey($u.Id)) { $updatesById[$u.Id] = New-Object System.Collections.ArrayList }
+        [void]$updatesById[$u.Id].Add($u)
     }
+    $idCount = @{}
+    foreach ($p in $list) { $idCount[$p.Id] = 1 + [int]$idCount[$p.Id] }
 
     foreach ($p in $list) {
-        $u = $updates[$p.Id]
+        $u = $null
+        if ($updatesById.ContainsKey($p.Id)) {
+            $u = $updatesById[$p.Id] | Where-Object { Test-SameVersion $_.Version $p.Version } | Select-Object -First 1
+            # A single installed copy still matches by Id if the two tables show its version differently.
+            if (-not $u -and $idCount[$p.Id] -eq 1) { $u = $updatesById[$p.Id][0] }
+        }
         $latest = if ($u -and $u.Available) { $u.Available } elseif ($p.Available) { $p.Available } else { $p.Version }
         [pscustomobject]@{
             Name            = $p.Name
@@ -132,6 +161,9 @@ function Get-AppsFromCli {
             Installed       = $p.Version
             Latest          = $latest
             UpdateAvailable = [bool]$u
+            # winget list knows a newer version, but winget upgrade skips it (pinned, or the
+            # package needs explicit targeting), so 'winget upgrade --all' will not install it.
+            Held            = (-not $u) -and [bool]$p.Available -and -not (Test-SameVersion $p.Available $p.Version)
         }
     }
 }
@@ -190,7 +222,7 @@ function Write-AppTable($Rows) {
     Write-Host ($fmt -f 'Name', 'Id', 'Installed', 'Latest', 'Status')
     Write-Host ($fmt -f ('-' * $w.Name), ('-' * $w.Id), ('-' * $w.Installed), ('-' * $w.Latest), ('-' * 16))
     foreach ($r in $Rows) {
-        $color = if ($r.Status -eq 'Update available') { 'Yellow' } else { 'Green' }
+        $color = switch ($r.Status) { 'Update available' { 'Yellow' } 'Update held' { 'Cyan' } default { 'Green' } }
         $line = $fmt -f (Limit-Text $r.Name $w.Name), (Limit-Text $r.Id $w.Id),
             (Limit-Text $r.Installed $w.Installed), (Limit-Text $r.Latest $w.Latest), $r.Status
         Write-Host $line -ForegroundColor $color
@@ -207,7 +239,9 @@ $rows = @(Get-AppInventory | Sort-Object Name | ForEach-Object {
         Id        = [string]$_.Id
         Installed = [string]$_.Installed
         Latest    = [string]$_.Latest
-        Status    = if ($_.UpdateAvailable) { 'Update available' } else { 'Up to date' }
+        Status    = if ($_.UpdateAvailable) { 'Update available' }
+                    elseif ($_.PSObject.Properties['Held'] -and $_.Held) { 'Update held' }
+                    else { 'Up to date' }
     }
 })
 $updates = @($rows | Where-Object { $_.Status -eq 'Update available' })
@@ -227,9 +261,11 @@ if ($Json) {
 
 if ($shown.Count -gt 0) { Write-AppTable $shown } else { Write-Host 'No applications to show.' }
 
+$held = @($rows | Where-Object { $_.Status -eq 'Update held' })
+$heldText = if ($held.Count -gt 0) { ", $($held.Count) held" } else { '' }
 Write-Host ''
-Write-Host ("Summary: {0} apps checked, {1} update(s) available, {2} up to date." -f `
-    $rows.Count, $updates.Count, ($rows.Count - $updates.Count))
+Write-Host ("Summary: {0} apps checked, {1} update(s) available{2}, {3} up to date." -f `
+    $rows.Count, $updates.Count, $heldText, ($rows.Count - $updates.Count - $held.Count))
 
 if ($updates.Count -gt 0) {
     Write-Host ''
