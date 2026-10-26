@@ -1,0 +1,10 @@
+# Script output
+*.csv
+*.json
+*.log
+
+# OS / editor files
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
