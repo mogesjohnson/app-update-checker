@@ -137,6 +137,34 @@ Describe 'Get-AppsFromCli' {
         )
     }
 
+    It 'matches upgrades by Id and installed version when an Id is installed twice' {
+        Mock winget {
+            $header = @(
+                'Name             Id                 Version   Available Source',
+                '---------------------------------------------------------------'
+            )
+            switch ($args[0]) {
+                'list' {
+                    $header
+                    '.NET Runtime 8   Microsoft.DotNet.8 8.0.8     8.0.11    winget'
+                    '.NET Runtime 8   Microsoft.DotNet.8 8.0.11              winget'
+                }
+                'upgrade' {
+                    $header
+                    '.NET Runtime 8   Microsoft.DotNet.8 8.0.8     8.0.11    winget'
+                }
+            }
+        }
+        $apps = @(Get-AppsFromCli)
+        $apps.Count | Should -Be 2
+        $old = $apps | Where-Object Installed -eq '8.0.8'
+        $new = $apps | Where-Object Installed -eq '8.0.11'
+        $old.UpdateAvailable | Should -BeTrue
+        $old.Latest | Should -Be '8.0.11'
+        $new.UpdateAvailable | Should -BeFalse
+        $new.Latest | Should -Be '8.0.11'
+    }
+
     It 'throws when winget is not installed' {
         Mock Get-Command { $null } -ParameterFilter { $Name -eq 'winget' }
         { Get-AppsFromCli } | Should -Throw '*winget was not found*'
