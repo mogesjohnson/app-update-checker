@@ -181,13 +181,14 @@ use `Microsoft.msoledbsql`). That is normal: winget lists every installed copy, 
 checks each copy on its own. `held` appears in the summary only when there are held rows.
 
 - With `-UpdatesOnly` and nothing to update you get `No applications to show.` and the summary.
-- With `-ExportCsv` the script also prints `Exported <n> row(s) to <path>`.
-- With `-Json` you get only the JSON array (`[]` when empty), for example:
+- With `-ExportCsv` the script also prints `Exported <n> row(s) to <path>` (on stderr when
+  `-Json` is set).
+- With `-Json` you get only the JSON array on stdout (`[]` when empty), for example:
 
   ```json
   [
     {
-      "Name": "7-Zip",
+      "Name": "7-Zip 23.01 (x64)",
       "Id": "7zip.7zip",
       "Installed": "23.01",
       "Latest": "24.08",
@@ -196,7 +197,17 @@ checks each copy on its own. `held` appears in the summary only when there are h
   ]
   ```
 
-  Windows PowerShell 5.1 indents JSON differently from PowerShell 7; the content is the same.
+  `-Json` caveats:
+
+  - Warnings (module not found, module failed) and the CSV message go to **stderr**, so
+    `... -Json | ConvertFrom-Json` and `... -Json > apps.json` get clean JSON. Add `2>$null`
+    to hide them.
+  - `-Json` never shows the module prompt; without the module it uses the CLI.
+  - Statuses in the JSON are the same strings as in the table, including `Update held`.
+  - Windows PowerShell 5.1 indents JSON differently from PowerShell 7, and writes an empty
+    result as `[` and `]` on separate lines; the content is the same.
+  - Names and versions may be cut short with `…` when they come from the winget CLI,
+    because winget truncates long values itself.
 
 ## Notes
 
