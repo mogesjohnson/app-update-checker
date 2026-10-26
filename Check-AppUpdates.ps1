@@ -118,13 +118,21 @@ function Get-AppsFromCli {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
     $list = ConvertFrom-WingetTable (winget list --accept-source-agreements 2>$null)
+    # Key upgrades by Id and installed version: winget lists one row per installed copy,
+    # so an Id installed twice must not mark both copies as outdated.
     $updates = @{}
+    $updatesById = @{}
     foreach ($u in ConvertFrom-WingetTable (winget upgrade --include-unknown --accept-source-agreements 2>$null)) {
-        $updates[$u.Id] = $u
+        $updates["$($u.Id)|$($u.Version)"] = $u
+        $updatesById[$u.Id] = $u
     }
+    $idCount = @{}
+    foreach ($p in $list) { $idCount[$p.Id] = 1 + [int]$idCount[$p.Id] }
 
     foreach ($p in $list) {
-        $u = $updates[$p.Id]
+        $u = $updates["$($p.Id)|$($p.Version)"]
+        # A single installed copy still matches by Id if the two tables show its version differently.
+        if (-not $u -and $idCount[$p.Id] -eq 1) { $u = $updatesById[$p.Id] }
         $latest = if ($u -and $u.Available) { $u.Available } elseif ($p.Available) { $p.Available } else { $p.Version }
         [pscustomobject]@{
             Name            = $p.Name
