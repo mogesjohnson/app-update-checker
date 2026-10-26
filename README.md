@@ -33,6 +33,10 @@ cd app-update-checker
 
 or download only the script into the current folder:
 
+> **Note:** the download links and one-liners in this README point at the `main` branch.
+> The fixes described here (wide-character names, no prompt under `-Json`, the `Update held`
+> status, and so on) reach those links only after their pull requests are merged into `main`.
+
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/mogesjohnson/app-update-checker/main/Check-AppUpdates.ps1 -OutFile Check-AppUpdates.ps1
 Unblock-File .\Check-AppUpdates.ps1
@@ -116,12 +120,17 @@ Get-Help .\Check-AppUpdates.ps1 -Full
 One-liners without saving the file:
 
 ```powershell
-# Default run (asks the module question if the module is missing)
-irm https://raw.githubusercontent.com/mogesjohnson/app-update-checker/main/Check-AppUpdates.ps1 | iex
-
-# With options
+# Recommended: runs in its own scope and accepts options
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/mogesjohnson/app-update-checker/main/Check-AppUpdates.ps1))) -UpdatesOnly -UseCli
+
+# Shortest form, no options possible
+irm https://raw.githubusercontent.com/mogesjohnson/app-update-checker/main/Check-AppUpdates.ps1 | iex
 ```
+
+Prefer the scriptblock form. `irm | iex` runs the script text directly in your session, so
+afterwards its functions and option variables (`$Json`, `$UseCli`, ...) are still defined
+there. The script keeps strict mode and `$ErrorActionPreference = 'Stop'` inside its own
+function, so neither form changes those settings in your session.
 
 The first winget run on a machine may take a while to update its sources. The script accepts
 the source agreements (`--accept-source-agreements`) so it does not stop to ask.
