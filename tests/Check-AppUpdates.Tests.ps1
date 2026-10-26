@@ -253,6 +253,23 @@ Describe 'Get-AppsFromCli version matching for duplicate Ids' {
     }
 }
 
+Describe 'Get-AppsFromCli held updates' {
+    It 'marks an app held when list shows a newer version that upgrade skips' {
+        $script:listTable = @(
+            '{0,-20}{1,-20}{2,-10}{3,-10}{4}' -f 'Name', 'Id', 'Version', 'Available', 'Source'
+            '-' * 66
+            '{0,-20}{1,-20}{2,-10}{3,-10}{4}' -f 'Pinned App', 'Pinned.App', '1.0', '2.0', 'winget'
+            '{0,-20}{1,-20}{2,-10}{3,-10}{4}' -f 'Other App', 'Other.App', '1.0', '1.0.0', 'winget'
+        )
+        Mock winget { if ($args[0] -eq 'list') { $script:listTable } else { 'No installed package found matching input criteria.' } }
+        $apps = @(Get-AppsFromCli)
+        $apps[0].Held | Should -BeTrue
+        $apps[0].UpdateAvailable | Should -BeFalse
+        $apps[0].Latest | Should -Be '2.0'
+        $apps[1].Held | Should -BeFalse
+    }
+}
+
 Describe 'Get-AppsFromModule with an Id installed twice' {
     It 'maps each installed copy on its own' {
         Mock Import-Module { } -ParameterFilter { $Name -eq 'Microsoft.WinGet.Client' }
@@ -390,5 +407,22 @@ Describe 'Check-AppUpdates.ps1 end to end' {
         $rows = @(Import-Csv $csv)
         $rows.Count | Should -Be 3
         $rows[0].PSObject.Properties.Name | Should -Be @('Name', 'Id', 'Installed', 'Latest', 'Status')
+    }
+
+    It 'reports a pinned app as Update held, outside -UpdatesOnly and the update count' {
+        $pinned = '{0,-39}{1,-35}{2,-17}{3,-15}{4}' -f 'Pinned App', 'Pinned.App', '1.0', '2.0', 'winget'
+        $heldList = @(Get-Fixture 'winget-list.txt') + $pinned
+        Mock winget {
+            $calls.Add(($args -join ' '))
+            if ($args[0] -eq 'list') { $heldList } else { Get-Fixture 'winget-upgrade.txt' }
+        }
+        $apps = ConvertFrom-JsonArray (& $ScriptPath -UseCli -Json)
+        $app = $apps | Where-Object Id -eq 'Pinned.App'
+        $app.Status | Should -Be 'Update held'
+        $app.Latest | Should -Be '2.0'
+        (ConvertFrom-JsonArray (& $ScriptPath -UseCli -Json -UpdatesOnly)).Id | Should -Not -Contain 'Pinned.App'
+        $out = & $ScriptPath -UseCli 6>&1 | Out-String
+        $out | Should -Match 'Summary: 7 apps checked, 3 update\(s\) available, 1 held, 3 up to date\.'
+        $out | Should -Not -Match '--id Pinned\.App'
     }
 }
