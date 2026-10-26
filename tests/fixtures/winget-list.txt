@@ -1,0 +1,8 @@
+Name                                   Id                                 Version          Available      Source
+----------------------------------------------------------------------------------------------------------------------
+7-Zip 23.01 (x64)                      7zip.7zip                          23.01            24.08          winget
+Git                                    Git.Git                            2.47.0                          winget
+Google Chrome                          Google.Chrome                      129.0.6668.90    130.0.6723.70  winget
+Microsoft Visual C++ 2015-2022 Redist… Microsoft.VCRedist.2015+.x64       14.40.33810.0    14.42.34433.0  winget
+Contoso Legacy Tool                    ARP\Machine\X64\ContosoLegacy      1.0
+Microsoft Visual Studio Code           Microsoft.VisualStudioCode         1.94.2                          winget
