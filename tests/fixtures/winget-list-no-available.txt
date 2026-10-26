@@ -1,0 +1,4 @@
+Name                                   Id                                 Version          Source
+-------------------------------------------------------------------------------------------------------
+Git                                    Git.Git                            2.47.0           winget
+Microsoft Visual Studio Code           Microsoft.VisualStudioCode         1.94.2           winget

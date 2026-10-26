@@ -1,0 +1,11 @@
+Name                                   Id                                 Version          Available      Source
+----------------------------------------------------------------------------------------------------------------------
+7-Zip 23.01 (x64)                      7zip.7zip                          23.01            24.08          winget
+Google Chrome                          Google.Chrome                      129.0.6668.90    130.0.6723.70  winget
+Microsoft Visual C++ 2015-2022 Redist… Microsoft.VCRedist.2015+.x64       14.40.33810.0    14.42.34433.0  winget
+3 upgrades available.
+
+The following packages have an upgrade available, but require explicit targeting for upgrade:
+Name   Id          Version Available Source
+----------------------------------------------
+Pinned App   Pinned.App     1.0     2.0   winget
