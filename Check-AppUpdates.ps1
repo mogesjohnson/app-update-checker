@@ -46,8 +46,6 @@ param(
     [switch]$UseCli
 )
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
 $ModuleName = 'Microsoft.WinGet.Client'
 
 function Get-AppsFromModule {
@@ -272,45 +270,54 @@ function Write-AppTable($Rows) {
 }
 
 # ---- main ----
+function Invoke-AppUpdateCheck {
+    # Strict mode and Stop are set here, not at script level, so they apply to this run
+    # (and the functions it calls) without staying on in the caller's session when the
+    # script text is run with Invoke-Expression.
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+
+    $rows = @(Get-AppInventory | Sort-Object Name | ForEach-Object {
+        [pscustomobject]@{
+            Name      = [string]$_.Name
+            Id        = [string]$_.Id
+            Installed = [string]$_.Installed
+            Latest    = [string]$_.Latest
+            Status    = if ($_.UpdateAvailable) { 'Update available' }
+                        elseif ($_.PSObject.Properties['Held'] -and $_.Held) { 'Update held' }
+                        else { 'Up to date' }
+        }
+    })
+    $updates = @($rows | Where-Object { $_.Status -eq 'Update available' })
+    # @() keeps an empty result an array; under StrictMode $null.Count would throw.
+    $shown = @(if ($UpdatesOnly) { $updates } else { $rows })
+
+    if ($ExportCsv) {
+        $shown | Export-Csv -Path $ExportCsv -NoTypeInformation -Encoding UTF8
+        $exported = "Exported $($shown.Count) row(s) to $ExportCsv"
+        if ($Json) { [Console]::Error.WriteLine($exported) } else { Write-Host $exported -ForegroundColor Cyan }
+    }
+
+    if ($Json) {
+        ConvertTo-Json -InputObject @($shown) -Depth 3
+        return
+    }
+
+    if ($shown.Count -gt 0) { Write-AppTable $shown } else { Write-Host 'No applications to show.' }
+
+    $held = @($rows | Where-Object { $_.Status -eq 'Update held' })
+    $heldText = if ($held.Count -gt 0) { ", $($held.Count) held" } else { '' }
+    Write-Host ''
+    Write-Host ("Summary: {0} apps checked, {1} update(s) available{2}, {3} up to date." -f `
+        $rows.Count, $updates.Count, $heldText, ($rows.Count - $updates.Count - $held.Count))
+
+    if ($updates.Count -gt 0) {
+        Write-Host ''
+        Write-Host 'To update an app (this script does not install anything), run:' -ForegroundColor Cyan
+        foreach ($u in $updates) { Write-Host "  winget upgrade --id $($u.Id)" }
+    }
+}
+
 # Dot-sourcing (. .\Check-AppUpdates.ps1) only loads the functions above, so tests can call them.
 if ($MyInvocation.InvocationName -eq '.') { return }
-
-$rows = @(Get-AppInventory | Sort-Object Name | ForEach-Object {
-    [pscustomobject]@{
-        Name      = [string]$_.Name
-        Id        = [string]$_.Id
-        Installed = [string]$_.Installed
-        Latest    = [string]$_.Latest
-        Status    = if ($_.UpdateAvailable) { 'Update available' }
-                    elseif ($_.PSObject.Properties['Held'] -and $_.Held) { 'Update held' }
-                    else { 'Up to date' }
-    }
-})
-$updates = @($rows | Where-Object { $_.Status -eq 'Update available' })
-# @() keeps an empty result an array; under StrictMode $null.Count would throw.
-$shown = @(if ($UpdatesOnly) { $updates } else { $rows })
-
-if ($ExportCsv) {
-    $shown | Export-Csv -Path $ExportCsv -NoTypeInformation -Encoding UTF8
-    $exported = "Exported $($shown.Count) row(s) to $ExportCsv"
-    if ($Json) { [Console]::Error.WriteLine($exported) } else { Write-Host $exported -ForegroundColor Cyan }
-}
-
-if ($Json) {
-    ConvertTo-Json -InputObject @($shown) -Depth 3
-    return
-}
-
-if ($shown.Count -gt 0) { Write-AppTable $shown } else { Write-Host 'No applications to show.' }
-
-$held = @($rows | Where-Object { $_.Status -eq 'Update held' })
-$heldText = if ($held.Count -gt 0) { ", $($held.Count) held" } else { '' }
-Write-Host ''
-Write-Host ("Summary: {0} apps checked, {1} update(s) available{2}, {3} up to date." -f `
-    $rows.Count, $updates.Count, $heldText, ($rows.Count - $updates.Count - $held.Count))
-
-if ($updates.Count -gt 0) {
-    Write-Host ''
-    Write-Host 'To update an app (this script does not install anything), run:' -ForegroundColor Cyan
-    foreach ($u in $updates) { Write-Host "  winget upgrade --id $($u.Id)" }
-}
+Invoke-AppUpdateCheck
