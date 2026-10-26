@@ -296,6 +296,16 @@ Describe 'Running non-interactively in a child process' {
         $r.Out | Should -Match 'Summary: '
     }
 
+    It 'sends the CSV export message to stderr under -Json' {
+        $csv = Join-Path $TestDrive 'apps.csv'
+        $r = Invoke-Child @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"", '-UseCli', '-Json', '-ExportCsv', "`"$csv`"")
+        $r.ExitCode | Should -Be 0
+        $r.Out | Should -Not -Match 'Exported'
+        @(($r.Out | ConvertFrom-Json) | ForEach-Object { $_ }).Count | Should -Be 6
+        $r.Err | Should -Match 'Exported 6 row\(s\)'
+        Test-Path $csv | Should -BeTrue
+    }
+
     It 'reports a -NonInteractive session as not interactive' {
         $cmd = ". '$ScriptPath'; Test-InteractiveSession"
         & $exe -NoProfile -NonInteractive -Command $cmd | Should -Be 'False'

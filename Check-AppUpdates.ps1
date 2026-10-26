@@ -214,7 +214,8 @@ $shown = @(if ($UpdatesOnly) { $updates } else { $rows })
 
 if ($ExportCsv) {
     $shown | Export-Csv -Path $ExportCsv -NoTypeInformation -Encoding UTF8
-    Write-Host "Exported $($shown.Count) row(s) to $ExportCsv" -ForegroundColor Cyan
+    $exported = "Exported $($shown.Count) row(s) to $ExportCsv"
+    if ($Json) { [Console]::Error.WriteLine($exported) } else { Write-Host $exported -ForegroundColor Cyan }
 }
 
 if ($Json) {
