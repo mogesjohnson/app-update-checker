@@ -136,17 +136,37 @@ function Get-AppsFromCli {
     }
 }
 
+function Test-InteractiveSession {
+    # False when nobody can answer a prompt: a service or scheduled task, piped or
+    # redirected input, or PowerShell started with -NonInteractive.
+    if (-not [Environment]::UserInteractive) { return $false }
+    try { if ([Console]::IsInputRedirected) { return $false } } catch { $null = $_ }
+    foreach ($arg in [Environment]::GetCommandLineArgs()) {
+        if ($arg -match '^[-/]noni') { return $false }
+    }
+    $true
+}
+
+function Write-Notice([string]$Message) {
+    # Under -Json stdout must carry only JSON, so notices go to stderr there.
+    if ($Json) { [Console]::Error.WriteLine("WARNING: $Message") } else { Write-Warning $Message }
+}
+
 function Get-AppInventory {
     if (-not $UseCli) {
         if (-not (Get-Module -ListAvailable $ModuleName)) {
-            $answer = Read-Host "$ModuleName module not found. Install it for the current user now? [y/N] (N = use winget CLI)"
-            if ($answer -match '^(y|yes)$') {
-                Install-Module $ModuleName -Scope CurrentUser -Force -AllowClobber
+            if ($Json -or -not (Test-InteractiveSession)) {
+                Write-Notice "$ModuleName module not found; using the winget CLI. Install the module or run interactively to be offered it."
+            } else {
+                $answer = Read-Host "$ModuleName module not found. Install it for the current user now? [y/N] (N = use winget CLI)"
+                if ($answer -match '^(y|yes)$') {
+                    Install-Module $ModuleName -Scope CurrentUser -Force -AllowClobber
+                }
             }
         }
         if (Get-Module -ListAvailable $ModuleName) {
             try { return @(Get-AppsFromModule) }
-            catch { Write-Warning "WinGet module failed ($($_.Exception.Message)); falling back to winget CLI." }
+            catch { Write-Notice "WinGet module failed ($($_.Exception.Message)); falling back to winget CLI." }
         }
     }
     return @(Get-AppsFromCli)

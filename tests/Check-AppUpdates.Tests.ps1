@@ -174,6 +174,8 @@ Describe 'Get-AppInventory' {
         Mock Get-AppsFromModule { [pscustomobject]@{ Name = 'module' } }
         Mock Install-Module { }
         Mock Read-Host { 'n' }
+        Mock Test-InteractiveSession { $true }
+        Mock Write-Notice { }
     }
 
     It 'uses the module when it is installed' {
@@ -194,6 +196,109 @@ Describe 'Get-AppInventory' {
         (Get-AppInventory).Name | Should -Be 'cli'
         Should -Invoke Read-Host -Times 0 -Exactly
         Should -Invoke Get-Module -Times 0 -Exactly
+    }
+
+    It 'does not prompt with -Json and says why on the notice channel' {
+        $Json = $true
+        Mock Get-Module { } -ParameterFilter { $ListAvailable }
+        (Get-AppInventory).Name | Should -Be 'cli'
+        Should -Invoke Read-Host -Times 0 -Exactly
+        Should -Invoke Write-Notice -Times 1 -Exactly -ParameterFilter { $Message -match 'module not found' }
+    }
+
+    It 'does not prompt when the session is not interactive' {
+        Mock Test-InteractiveSession { $false }
+        Mock Get-Module { } -ParameterFilter { $ListAvailable }
+        (Get-AppInventory).Name | Should -Be 'cli'
+        Should -Invoke Read-Host -Times 0 -Exactly
+        Should -Invoke Install-Module -Times 0 -Exactly
+        Should -Invoke Write-Notice -Times 1 -Exactly
+    }
+}
+
+Describe 'Write-Notice' {
+    It 'writes to stderr, not the output or warning streams, under -Json' {
+        $Json = $true
+        $saved = [Console]::Error
+        $err = New-Object System.IO.StringWriter
+        try {
+            [Console]::SetError($err)
+            $out = @(Write-Notice 'hello' 3>&1)
+        } finally { [Console]::SetError($saved) }
+        $out.Count | Should -Be 0
+        $err.ToString() | Should -Match 'WARNING: hello'
+    }
+
+    It 'uses the warning stream otherwise' {
+        $Json = $false
+        $out = @(Write-Notice 'hello' 3>&1)
+        "$($out[0])" | Should -Be 'hello'
+    }
+}
+
+Describe 'Running non-interactively in a child process' {
+    BeforeAll {
+        # Start the same PowerShell that runs the tests (pwsh or Windows PowerShell 5.1) with
+        # a fake winget first on PATH that prints the fixtures.
+        $exe = (Get-Process -Id $PID).Path
+        $shimDir = Join-Path $TestDrive 'shim'
+        $null = New-Item -ItemType Directory -Path $shimDir -Force
+        Copy-Item (Join-Path $FixtureDir 'winget-list.txt') (Join-Path $shimDir 'list.txt')
+        Copy-Item (Join-Path $FixtureDir 'winget-upgrade.txt') (Join-Path $shimDir 'upgrade.txt')
+        if ($env:OS -eq 'Windows_NT') {
+            Set-Content -Path (Join-Path $shimDir 'winget.cmd') -Encoding Ascii -Value @(
+                '@echo off'
+                'if "%1"=="list" type "%~dp0list.txt"'
+                'if "%1"=="upgrade" type "%~dp0upgrade.txt"'
+            )
+        } else {
+            $sh = Join-Path $shimDir 'winget'
+            [IO.File]::WriteAllText($sh, "#!/bin/sh`ncat `"`$(dirname `"`$0`")/`$1.txt`"`n")
+            & chmod +x $sh
+        }
+        $moduleInstalled = [bool](Get-Module -ListAvailable Microsoft.WinGet.Client)
+
+        function Invoke-Child([string[]]$Arguments) {
+            $in = Join-Path $TestDrive 'in.txt'
+            Set-Content -Path $in -Value 'N' -Encoding Ascii
+            $outFile = Join-Path $TestDrive 'out.txt'
+            $errFile = Join-Path $TestDrive 'err.txt'
+            $savedPath = $env:PATH
+            try {
+                $env:PATH = $shimDir + [IO.Path]::PathSeparator + $env:PATH
+                $p = Start-Process -FilePath $exe -ArgumentList $Arguments -NoNewWindow -Wait -PassThru `
+                    -RedirectStandardInput $in -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+            } finally { $env:PATH = $savedPath }
+            [pscustomobject]@{
+                ExitCode = $p.ExitCode
+                Out      = [string](Get-Content -LiteralPath $outFile -Raw)
+                Err      = [string](Get-Content -LiteralPath $errFile -Raw)
+            }
+        }
+    }
+
+    It "keeps stdout pure JSON when 'N' is piped in with -Json" {
+        $r = Invoke-Child @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"", '-Json')
+        $r.ExitCode | Should -Be 0
+        $r.Out | Should -Not -Match 'Install it|module not found'
+        $apps = @(($r.Out | ConvertFrom-Json) | ForEach-Object { $_ })
+        $apps.Count | Should -BeGreaterThan 0
+        if (-not $moduleInstalled) {
+            $apps.Count | Should -Be 6
+            $r.Err | Should -Match 'WARNING: Microsoft\.WinGet\.Client module not found'
+        }
+    }
+
+    It 'skips the prompt under -NonInteractive' {
+        $r = Invoke-Child @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$ScriptPath`"")
+        $r.ExitCode | Should -Be 0
+        $r.Out | Should -Not -Match 'Install it for the current user'
+        $r.Out | Should -Match 'Summary: '
+    }
+
+    It 'reports a -NonInteractive session as not interactive' {
+        $cmd = ". '$ScriptPath'; Test-InteractiveSession"
+        & $exe -NoProfile -NonInteractive -Command $cmd | Should -Be 'False'
     }
 }
 
