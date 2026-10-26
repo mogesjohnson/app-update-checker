@@ -145,22 +145,40 @@ the source agreements (`--accept-source-agreements`) so it does not stop to ask.
 
 ## Output
 
-Rows with updates are yellow, up-to-date rows are green. Apps are sorted by name.
+Apps are sorted by name. This is the output of a run with mocked winget data
+(`.\Check-AppUpdates.ps1 -UseCli`):
 
 ```text
-Name                 Id                           Installed     Latest        Status
--------------------  ---------------------------  ------------  ------------  ----------------
-7-Zip                7zip.7zip                    23.01         24.08         Update available
-Git                  Git.Git                      2.47.0        2.47.0        Up to date
-Google Chrome        Google.Chrome                129.0.6668    130.0.6723    Update available
-Visual Studio Code   Microsoft.VisualStudioCode   1.94.2        1.94.2        Up to date
+Name                                    Id                             Installed      Latest         Status
+--------------------------------------  -----------------------------  -------------  -------------  ----------------
+7-Zip 23.01 (x64)                       7zip.7zip                      23.01          24.08          Update available
+Contoso Legacy Tool                     ARP\Machine\X64\ContosoLegacy  1.0            1.0            Up to date
+Contoso Pinned App                      Contoso.PinnedApp              3.1            3.2            Update held
+Git                                     Git.Git                        2.47.0         2.47.0         Up to date
+Google Chrome                           Google.Chrome                  129.0.6668.90  130.0.6723.70  Update available
+Microsoft Visual C++ 2015-2022 Redist…  Microsoft.VCRedist.2015+.x64   14.40.33810.0  14.42.34433.0  Update available
+Microsoft Visual Studio Code            Microsoft.VisualStudioCode     1.94.2         1.94.2         Up to date
 
-Summary: 4 apps checked, 2 update(s) available, 2 up to date.
+Summary: 7 apps checked, 3 update(s) available, 1 held, 3 up to date.
 
 To update an app (this script does not install anything), run:
   winget upgrade --id 7zip.7zip
   winget upgrade --id Google.Chrome
+  winget upgrade --id Microsoft.VCRedist.2015+.x64
 ```
+
+Each row has one of three statuses:
+
+| Status | Colour | Meaning |
+| --- | --- | --- |
+| `Update available` | yellow | `winget upgrade` offers a newer version (shown as Latest) |
+| `Update held` | cyan | winget knows a newer version, but `winget upgrade` skips the app because it is pinned or needs explicit targeting. Latest shows that newer version. These rows are not in `-UpdatesOnly` or the upgrade hints; run `winget upgrade --id <Id>` yourself if you want it (add `--include-pinned` for a pin). |
+| `Up to date` | green | nothing newer is known; Latest equals Installed |
+
+The summary counts **rows**. The same app can appear twice, for example two installed
+versions of a .NET runtime, or two drivers that share one Id (OLE DB Driver 18 and 19 both
+use `Microsoft.msoledbsql`). That is normal: winget lists every installed copy, and the script
+checks each copy on its own. `held` appears in the summary only when there are held rows.
 
 - With `-UpdatesOnly` and nothing to update you get `No applications to show.` and the summary.
 - With `-ExportCsv` the script also prints `Exported <n> row(s) to <path>`.
