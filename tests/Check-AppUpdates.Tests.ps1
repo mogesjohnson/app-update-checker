@@ -259,6 +259,20 @@ Describe 'Check-AppUpdates.ps1 end to end' {
         $out | Should -Match 'Up to date'
     }
 
+    It 'says there is nothing to show with -UpdatesOnly when every app is up to date' {
+        Mock winget {
+            $calls.Add(($args -join ' '))
+            switch ($args[0]) {
+                'list' { Get-Fixture 'winget-list-no-available.txt' }
+                'upgrade' { Get-Fixture 'winget-upgrade-none.txt' }
+            }
+        }
+        $out = & $ScriptPath -UseCli -UpdatesOnly 6>&1 | Out-String
+        $out | Should -Match 'No applications to show\.'
+        $out | Should -Match 'Summary: 2 apps checked, 0 update\(s\) available, 2 up to date\.'
+        (& $ScriptPath -UseCli -UpdatesOnly -Json | Out-String).Trim() | Should -Be '[]'
+    }
+
     It 'exports the shown rows to CSV' {
         $csv = Join-Path $TestDrive 'updates.csv'
         $null = & $ScriptPath -UseCli -UpdatesOnly -ExportCsv $csv 6>&1

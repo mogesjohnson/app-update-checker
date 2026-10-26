@@ -189,7 +189,8 @@ $rows = @(Get-AppInventory | Sort-Object Name | ForEach-Object {
     }
 })
 $updates = @($rows | Where-Object { $_.Status -eq 'Update available' })
-$shown = if ($UpdatesOnly) { $updates } else { $rows }
+# @() keeps an empty result an array; under StrictMode $null.Count would throw.
+$shown = @(if ($UpdatesOnly) { $updates } else { $rows })
 
 if ($ExportCsv) {
     $shown | Export-Csv -Path $ExportCsv -NoTypeInformation -Encoding UTF8
