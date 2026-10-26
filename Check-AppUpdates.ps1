@@ -64,6 +64,7 @@ function Get-AppsFromModule {
             Installed       = $installed
             Latest          = $latest
             UpdateAvailable = [bool]$pkg.IsUpdateAvailable
+            Held            = $false
         }
     }
 }
@@ -202,6 +203,9 @@ function Get-AppsFromCli {
             Installed       = $p.Version
             Latest          = $latest
             UpdateAvailable = [bool]$u
+            # winget list knows a newer version, but winget upgrade skips it (pinned, or the
+            # package needs explicit targeting), so 'winget upgrade --all' will not install it.
+            Held            = (-not $u) -and [bool]$p.Available -and -not (Test-SameVersion $p.Available $p.Version)
         }
     }
 }
@@ -238,7 +242,7 @@ function Write-AppTable($Rows) {
     Write-Host ($fmt -f 'Name', 'Id', 'Installed', 'Latest', 'Status')
     Write-Host ($fmt -f ('-' * $w.Name), ('-' * $w.Id), ('-' * $w.Installed), ('-' * $w.Latest), ('-' * 16))
     foreach ($r in $Rows) {
-        $color = if ($r.Status -eq 'Update available') { 'Yellow' } else { 'Green' }
+        $color = switch ($r.Status) { 'Update available' { 'Yellow' } 'Update held' { 'Cyan' } default { 'Green' } }
         $line = $fmt -f (Limit-Text $r.Name $w.Name), (Limit-Text $r.Id $w.Id),
             (Limit-Text $r.Installed $w.Installed), (Limit-Text $r.Latest $w.Latest), $r.Status
         Write-Host $line -ForegroundColor $color
@@ -255,7 +259,9 @@ $rows = @(Get-AppInventory | Sort-Object Name | ForEach-Object {
         Id        = [string]$_.Id
         Installed = [string]$_.Installed
         Latest    = [string]$_.Latest
-        Status    = if ($_.UpdateAvailable) { 'Update available' } else { 'Up to date' }
+        Status    = if ($_.UpdateAvailable) { 'Update available' }
+                    elseif ($_.PSObject.Properties['Held'] -and $_.Held) { 'Update held' }
+                    else { 'Up to date' }
     }
 })
 $updates = @($rows | Where-Object { $_.Status -eq 'Update available' })
@@ -274,9 +280,11 @@ if ($Json) {
 
 if ($shown.Count -gt 0) { Write-AppTable $shown } else { Write-Host 'No applications to show.' }
 
+$held = @($rows | Where-Object { $_.Status -eq 'Update held' })
+$heldText = if ($held.Count -gt 0) { ", $($held.Count) held" } else { '' }
 Write-Host ''
-Write-Host ("Summary: {0} apps checked, {1} update(s) available, {2} up to date." -f `
-    $rows.Count, $updates.Count, ($rows.Count - $updates.Count))
+Write-Host ("Summary: {0} apps checked, {1} update(s) available{2}, {3} up to date." -f `
+    $rows.Count, $updates.Count, $heldText, ($rows.Count - $updates.Count - $held.Count))
 
 if ($updates.Count -gt 0) {
     Write-Host ''
