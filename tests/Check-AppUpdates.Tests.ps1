@@ -14,6 +14,9 @@ BeforeAll {
     function Get-WinGetPackage { throw 'real Get-WinGetPackage must not run in tests' }
 
     . $ScriptPath
+    # The script sets these inside Invoke-AppUpdateCheck; run the functions under the same rules.
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
 }
 
 Describe 'ConvertFrom-WingetTable' {
@@ -463,6 +466,29 @@ Describe 'Running non-interactively in a child process' {
         @(($r.Out | ConvertFrom-Json) | ForEach-Object { $_ }).Count | Should -Be 6
         $r.Err | Should -Match 'Exported 6 row\(s\)'
         Test-Path $csv | Should -BeTrue
+    }
+
+    It 'leaves the caller session settings alone when run through a scriptblock or iex' {
+        # The README one-liners run the script text in the caller's session. Strict mode and
+        # ErrorActionPreference = Stop must not stay switched on there afterwards.
+        $driver = Join-Path $TestDrive 'driver.ps1'
+        Set-Content -Path $driver -Encoding Ascii -Value @(
+            '$ErrorActionPreference = ''Continue'''
+            '$s = [IO.File]::ReadAllText($env:AUC_SCRIPT)'
+            '$null = & ([scriptblock]::Create($s)) -UseCli -Json'
+            '"scriptblock eap=$ErrorActionPreference"'
+            'try { $null = $notSetAnywhere; ''scriptblock strict=off'' } catch { ''scriptblock strict=on'' }'
+            '$null = $s | Invoke-Expression'
+            '"iex eap=$ErrorActionPreference"'
+            'try { $null = $notSetAnywhere2; ''iex strict=off'' } catch { ''iex strict=on'' }'
+        )
+        $env:AUC_SCRIPT = $ScriptPath
+        try {
+            $r = Invoke-Child @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$driver`"")
+        } finally { Remove-Item Env:AUC_SCRIPT }
+        $r.ExitCode | Should -Be 0
+        $lines = @($r.Out -split '\r?\n' | Where-Object { $_ -match '^(scriptblock|iex) ' })
+        $lines | Should -Be @('scriptblock eap=Continue', 'scriptblock strict=off', 'iex eap=Continue', 'iex strict=off')
     }
 
     It 'reports a -NonInteractive session as not interactive' {
