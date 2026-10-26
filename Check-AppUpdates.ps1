@@ -176,6 +176,9 @@ function Write-AppTable($Rows) {
 }
 
 # ---- main ----
+# Dot-sourcing (. .\Check-AppUpdates.ps1) only loads the functions above, so tests can call them.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
 $rows = @(Get-AppInventory | Sort-Object Name | ForEach-Object {
     [pscustomobject]@{
         Name      = [string]$_.Name
