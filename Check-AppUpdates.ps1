@@ -40,6 +40,7 @@
 #>
 [CmdletBinding()]
 param(
+    [switch]$UseCli
 )
 
 Set-StrictMode -Version Latest
@@ -64,13 +65,88 @@ function Get-AppsFromModule {
     }
 }
 
-function Get-AppInventory {
-    if (-not (Get-Module -ListAvailable $ModuleName)) {
-        $answer = Read-Host "$ModuleName module not found. Install it for the current user now? [y/N]"
-        if ($answer -notmatch '^(y|yes)$') { throw "$ModuleName is required." }
-        Install-Module $ModuleName -Scope CurrentUser -Force -AllowClobber
+function ConvertFrom-WingetTable {
+    # Parses a winget text table using the column start positions of the header line.
+    param([string[]]$Lines)
+
+    # winget writes progress spinners with carriage returns; keep the final text of each line.
+    $Lines = @($Lines | ForEach-Object { ([string]$_ -split "`r")[-1] })
+
+    $sep = -1
+    for ($i = 1; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -match '^\s*-{10,}\s*$') { $sep = $i; break }
     }
-    return @(Get-AppsFromModule)
+    if ($sep -lt 1) { return }
+
+    $header = $Lines[$sep - 1]
+    $cols = @([regex]::Matches($header, '\S+') | ForEach-Object { [pscustomobject]@{ Name = $_.Value; Start = $_.Index } })
+    if ($cols.Count -lt 3) { return }
+
+    $availIdx = -1
+    for ($c = 0; $c -lt $cols.Count; $c++) { if ($cols[$c].Name -eq 'Available') { $availIdx = $c } }
+    if ($availIdx -lt 0 -and $cols.Count -ge 5) { $availIdx = 3 }
+
+    for ($i = $sep + 1; $i -lt $Lines.Count; $i++) {
+        $line = $Lines[$i]
+        if ([string]::IsNullOrWhiteSpace($line)) { break }   # end of table
+        if ($line.Length -le $cols[2].Start) { continue }    # not a data row
+
+        $cells = for ($c = 0; $c -lt $cols.Count; $c++) {
+            $start = $cols[$c].Start
+            $end = if ($c + 1 -lt $cols.Count) { [Math]::Min($cols[$c + 1].Start, $line.Length) } else { $line.Length }
+            if ($start -ge $line.Length -or $end -le $start) { '' } else { $line.Substring($start, $end - $start).Trim() }
+        }
+        $cells = @($cells)
+        if (-not $cells[1]) { continue }
+
+        [pscustomobject]@{
+            Name      = $cells[0]
+            Id        = $cells[1]
+            Version   = $cells[2]
+            Available = if ($availIdx -ge 0) { $cells[$availIdx] } else { '' }
+        }
+    }
+}
+
+function Get-AppsFromCli {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw 'winget was not found. Install "App Installer" from the Microsoft Store.'
+    }
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+    $list = ConvertFrom-WingetTable (winget list --accept-source-agreements 2>$null)
+    $updates = @{}
+    foreach ($u in ConvertFrom-WingetTable (winget upgrade --include-unknown --accept-source-agreements 2>$null)) {
+        $updates[$u.Id] = $u
+    }
+
+    foreach ($p in $list) {
+        $u = $updates[$p.Id]
+        $latest = if ($u -and $u.Available) { $u.Available } elseif ($p.Available) { $p.Available } else { $p.Version }
+        [pscustomobject]@{
+            Name            = $p.Name
+            Id              = $p.Id
+            Installed       = $p.Version
+            Latest          = $latest
+            UpdateAvailable = [bool]$u
+        }
+    }
+}
+
+function Get-AppInventory {
+    if (-not $UseCli) {
+        if (-not (Get-Module -ListAvailable $ModuleName)) {
+            $answer = Read-Host "$ModuleName module not found. Install it for the current user now? [y/N] (N = use winget CLI)"
+            if ($answer -match '^(y|yes)$') {
+                Install-Module $ModuleName -Scope CurrentUser -Force -AllowClobber
+            }
+        }
+        if (Get-Module -ListAvailable $ModuleName) {
+            try { return @(Get-AppsFromModule) }
+            catch { Write-Warning "WinGet module failed ($($_.Exception.Message)); falling back to winget CLI." }
+        }
+    }
+    return @(Get-AppsFromCli)
 }
 
 # ---- main ----
